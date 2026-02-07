@@ -2,7 +2,7 @@ name: Growatt Monitor
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # every 10 minutes
+    - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -17,6 +17,15 @@ jobs:
         with:
           node-version: "20"
 
+      # ✅ Restore state.json from cache
+      - name: Restore state cache
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: growatt-state-${{ github.ref }}
+          restore-keys: |
+            growatt-state-
+
       - name: Install deps
         run: npm ci || npm install
 
@@ -28,3 +37,10 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           THRESHOLDS: ${{ secrets.THRESHOLDS }}
         run: node notify.js
+
+      # ✅ Save updated state.json to cache
+      - name: Save state cache
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: growatt-state-${{ github.ref }}
