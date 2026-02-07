@@ -9,14 +9,19 @@ const pass = process.env.GROWATT_PASS;
 const TG_TOKEN = process.env.TG_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
 
-const THRESHOLDS = (process.env.THRESHOLDS || "30,20,10")
+// thresholds: first = LOW, second = CRITICAL (you can change in GitHub secrets)
+const THRESHOLDS = (process.env.THRESHOLDS || "30,15")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter(Number.isFinite)
   .sort((a, b) => b - a);
 
+const [LOW_T = 30, CRIT_T = 15] = THRESHOLDS;
+
 if (!user || !pass || !TG_TOKEN || !TG_CHAT_ID) {
-  console.error("Missing env vars. Need GROWATT_USER, GROWATT_PASS, TG_TOKEN, TG_CHAT_ID");
+  console.error(
+    "Missing env vars. Need GROWATT_USER, GROWATT_PASS, TG_TOKEN, TG_CHAT_ID"
+  );
   process.exit(1);
 }
 
@@ -35,7 +40,11 @@ function loadState() {
   try {
     return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   } catch {
-    return { lastGridOn: null, sent: {} };
+    return {
+      lastGridOn: null,
+      lowSent: false,
+      critSent: false,
+    };
   }
 }
 function saveState(s) {
@@ -64,6 +73,7 @@ async function readStatus() {
   const dev = plant.devices[deviceSn];
 
   const soc = Number(dev.statusData?.capacity ?? -1);
+
   const vIn = Number(dev.statusData?.vAcInput ?? 0);
   const fIn = Number(dev.statusData?.fAcInput ?? 0);
   const gridOn = vIn > 10 && fIn > 40;
@@ -75,39 +85,49 @@ async function readStatus() {
   return { plantId, deviceSn, soc, gridOn, vIn, fIn, loadW, pvW, batV };
 }
 
+function fmtSummary(s) {
+  return (
+    `🔋 Battery: ${s.soc}% (${s.batV}V)\n` +
+    `🔌 Grid: ${s.gridOn ? "ON ✅" : "OFF ❌"} (vIn=${s.vIn}V fIn=${s.fIn}Hz)\n` +
+    `⚡ Load: ${s.loadW}W | ☀️ PV: ${s.pvW}W\n` +
+    `🆔 ${s.deviceSn}`
+  );
+}
+
 async function main() {
   const st = loadState();
   const s = await readStatus();
 
-  // Grid change
+  // --- 1) Grid OFF/ON alerts ---
   if (st.lastGridOn === null) {
     st.lastGridOn = s.gridOn;
-    await tgSend(`🔌 Grid: ${s.gridOn ? "ON ✅" : "OFF ❌"} (first check) | 🔋 ${s.soc}%`);
+    await tgSend(`📡 First check\n${fmtSummary(s)}`);
   } else if (st.lastGridOn !== s.gridOn) {
     st.lastGridOn = s.gridOn;
     await tgSend(
-      `🔌 Grid changed: ${s.gridOn ? "ON ✅" : "OFF ❌"} | vIn=${s.vIn}V fIn=${s.fIn}Hz\n` +
-      `🔋 Battery ${s.soc}% | ⚡ Load ${s.loadW}W | ☀️ PV ${s.pvW}W`
+      `${s.gridOn ? "⚡ Grid is BACK ON ✅" : "🚫 Grid is OFF ❌"}\n${fmtSummary(s)}`
     );
   }
 
-  // Battery thresholds
-  st.sent ||= {};
-  for (const t of THRESHOLDS) {
-    const key = String(t);
-    const alreadySent = !!st.sent[key];
-
-    if (!alreadySent && s.soc >= 0 && s.soc <= t) {
-      st.sent[key] = true;
-      await tgSend(`⚠️ Battery low: ${s.soc}% (<= ${t}%) | Grid ${s.gridOn ? "ON" : "OFF"}`);
-    }
-
-    // reset when back above threshold + buffer
-    if (alreadySent && s.soc > t + 3) st.sent[key] = false;
+  // --- 2) Battery LOW + CRITICAL alerts (no spam) ---
+  // CRITICAL first
+  if (!st.critSent && s.soc >= 0 && s.soc <= CRIT_T) {
+    st.critSent = true;
+    await tgSend(`🚨 Battery CRITICAL (<= ${CRIT_T}%)\n${fmtSummary(s)}`);
   }
 
+  // LOW (only if not critical)
+  if (!st.lowSent && s.soc >= 0 && s.soc <= LOW_T && s.soc > CRIT_T) {
+    st.lowSent = true;
+    await tgSend(`⚠️ Battery LOW (<= ${LOW_T}%)\n${fmtSummary(s)}`);
+  }
+
+  // Reset flags when battery recovers (so alerts can fire again next time)
+  if (st.critSent && s.soc > CRIT_T + 3) st.critSent = false;
+  if (st.lowSent && s.soc > LOW_T + 3) st.lowSent = false;
+
   saveState(st);
-  console.log({ ok: true, ...s, at: new Date().toISOString() });
+  console.log({ ok: true, ...s, at: new Date().toISOString(), LOW_T, CRIT_T });
 }
 
 main().catch((e) => {
