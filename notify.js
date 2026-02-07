@@ -90,8 +90,9 @@ async function main() {
     // Only send when Grid changes ON/OFF
     if (st.lastGridOn !== s.gridOn) {
         st.lastGridOn = s.gridOn;
-        await tgSend(`${s.gridOn ? "⚡ Grid is BACK ON ✅" : "🚫 Grid is OFF ❌"}\n${fmtMini(s)}`);
+        await tgSend(fmtMini(s));
     }
+
 
     saveState(st);
     console.log({ ok: true, ...s, at: new Date().toISOString() });
