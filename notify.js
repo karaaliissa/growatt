@@ -2,15 +2,23 @@
 const fs = require("fs");
 const Growatt = require("growatt");
 
-const user = "karaaliisssa";
-const pass = "Karali2458";
-
-// Telegram
-const TG_TOKEN = "8550082559:AAHeiYJXDRQfipDNEMZ1UYvWvCOaEetib-c";
-const TG_CHAT_ID = "475041150";
-
 const STATE_FILE = "./state.json";
-const THRESHOLDS = [30, 20, 10]; // change if you want
+
+const user = process.env.GROWATT_USER;
+const pass = process.env.GROWATT_PASS;
+const TG_TOKEN = process.env.TG_TOKEN;
+const TG_CHAT_ID = process.env.TG_CHAT_ID;
+
+const THRESHOLDS = (process.env.THRESHOLDS || "30,20,10")
+  .split(",")
+  .map((x) => Number(x.trim()))
+  .filter(Number.isFinite)
+  .sort((a, b) => b - a);
+
+if (!user || !pass || !TG_TOKEN || !TG_CHAT_ID) {
+  console.error("Missing env vars. Need GROWATT_USER, GROWATT_PASS, TG_TOKEN, TG_CHAT_ID");
+  process.exit(1);
+}
 
 async function tgSend(text) {
   const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
@@ -19,7 +27,7 @@ async function tgSend(text) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: TG_CHAT_ID, text }),
   });
-  const j = await res.json();
+  const j = await res.json().catch(() => ({}));
   if (!j.ok) console.log("Telegram error:", j);
 }
 
@@ -27,7 +35,7 @@ function loadState() {
   try {
     return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   } catch {
-    return { lastGridOn: null, lastSoc: null, sent: {} };
+    return { lastGridOn: null, sent: {} };
   }
 }
 function saveState(s) {
@@ -71,37 +79,38 @@ async function main() {
   const st = loadState();
   const s = await readStatus();
 
-  // 1) Grid change notifications
+  // Grid change
   if (st.lastGridOn === null) {
     st.lastGridOn = s.gridOn;
-    await tgSend(`🔌 Grid status: ${s.gridOn ? "ON ✅" : "OFF ❌"} (first check)`);
+    await tgSend(`🔌 Grid: ${s.gridOn ? "ON ✅" : "OFF ❌"} (first check) | 🔋 ${s.soc}%`);
   } else if (st.lastGridOn !== s.gridOn) {
     st.lastGridOn = s.gridOn;
     await tgSend(
       `🔌 Grid changed: ${s.gridOn ? "ON ✅" : "OFF ❌"} | vIn=${s.vIn}V fIn=${s.fIn}Hz\n` +
-        `🔋 Battery ${s.soc}% | ⚡ Load ${s.loadW}W | ☀️ PV ${s.pvW}W`
+      `🔋 Battery ${s.soc}% | ⚡ Load ${s.loadW}W | ☀️ PV ${s.pvW}W`
     );
   }
 
-  // 2) Low battery thresholds
+  // Battery thresholds
+  st.sent ||= {};
   for (const t of THRESHOLDS) {
     const key = String(t);
     const alreadySent = !!st.sent[key];
+
     if (!alreadySent && s.soc >= 0 && s.soc <= t) {
       st.sent[key] = true;
-      await tgSend(
-        `⚠️ Battery low: ${s.soc}% (<= ${t}%)\n` +
-          `🔌 Grid: ${s.gridOn ? "ON ✅" : "OFF ❌"} | ⚡ Load ${s.loadW}W | ☀️ PV ${s.pvW}W | 🔋 ${s.batV}V`
-      );
+      await tgSend(`⚠️ Battery low: ${s.soc}% (<= ${t}%) | Grid ${s.gridOn ? "ON" : "OFF"}`);
     }
-    // Reset “sent” when battery goes back above threshold + small buffer
+
+    // reset when back above threshold + buffer
     if (alreadySent && s.soc > t + 3) st.sent[key] = false;
   }
 
-  st.lastSoc = s.soc;
   saveState(st);
-
   console.log({ ok: true, ...s, at: new Date().toISOString() });
 }
 
-main().catch((e) => console.error("ERR:", e));
+main().catch((e) => {
+  console.error("ERR:", e);
+  process.exit(1);
+});
