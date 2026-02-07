@@ -1,0 +1,16 @@
+{
+  "name": "growatt-worker",
+  "version": "1.0.0",
+  "description": "Growatt inverter Telegram monitoring worker",
+  "main": "worker.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "keywords": ["growatt", "telegram", "solar", "monitor"],
+  "author": "Issa",
+  "license": "ISC",
+  "dependencies": {
+    "growatt": "^0.7.7"
+  }
+}
