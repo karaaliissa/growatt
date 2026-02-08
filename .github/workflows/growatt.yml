@@ -17,12 +17,12 @@ jobs:
         with:
           node-version: "20"
 
-      # ✅ Restore state.json from cache
+      # ✅ Restore state.json from cache (stable key)
       - name: Restore state cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: state.json
-          key: growatt-state-${{ github.ref }}
+          key: growatt-state
           restore-keys: |
             growatt-state-
 
@@ -35,12 +35,11 @@ jobs:
           GROWATT_PASS: ${{ secrets.GROWATT_PASS }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          THRESHOLDS: ${{ secrets.THRESHOLDS }}
         run: node notify.js
 
-      # ✅ Save updated state.json to cache
+      # ✅ Save updated state.json (unique key so it actually saves)
       - name: Save state cache
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: state.json
-          key: growatt-state-${{ github.ref }}
+          key: growatt-state-${{ github.run_id }}
